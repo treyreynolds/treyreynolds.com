@@ -1,78 +1,194 @@
 // @flow
 
 import React from 'react';
-import {range} from 'd3-array';
-import {hexbin as d3hexbin} from 'd3-hexbin';
-import {randomNormal} from 'd3-random';
-import {scaleLinear} from 'd3-scale';
-import {interpolateLab} from 'd3-interpolate';
-
-const width = 1200;
-const height = 700;
-let i = -1;
-let theta = 0;
-const deltaTheta = 0.3;
-const n = 2000;
-const k = 20;
-
-let randomX = randomNormal(width / 2, 80);
-let randomY = randomNormal(height / 2, 80);
-let points = range(n).map(function() { return [randomX(), randomY()]; });
-
-const color = scaleLinear()
-  .domain([0, 20])
-  .range(["rgba(0, 0, 0, 0)", "steelblue"])
-  .interpolate(interpolateLab);
-
-const hexbin = d3hexbin().radius(20);
+import './App.css';
+const CELL_SIZE = 20;
+const WIDTH = 1200;
+const HEIGHT = 800;
 
 type State = {
-  points: any
-}
+  cells: Array<?{x: number, y: number}>,
+  interval: number,
+  isRunning: boolean
+};
 
-export default class DynamicHexbin extends React.Component<{}, State> {
+class Game extends React.Component<{}, State> {
+
+  rows = 0;
+  cols = 0;
+  board = [];
+  boardRef = null;
+  timeoutHandler = null;
 
   state = {
-    points: points
+    cells: [],
+    interval: 100,
+    isRunning: false
   };
 
-  componentDidMount() {
-    this.handle = window.setInterval(() => { this._update(); }, 20);
+  constructor() {
+    super();
+    this.rows = HEIGHT / CELL_SIZE;
+    this.cols = WIDTH / CELL_SIZE;
+    this.board = this.makeEmptyBoard();
   }
 
-  componentWillUnmount() {
-    window.clearInterval(this.handle);
+  makeEmptyBoard() {
+    let board = [];
+    for (let y = 0; y < this.rows; y++) {
+      board[y] = [];
+      for (let x = 0; x < this.cols; x++) {
+        board[y][x] = false;
+      }
+    }
+    return board;
   }
 
-  _update() {
-    theta += deltaTheta;
-    randomX = randomNormal(width / 2 + 80 * Math.cos(theta), 80);
-    randomY = randomNormal(height / 2 + 80 * Math.sin(theta), 80);
+  makeCells() {
+    let cells = [];
+    for (let y = 0; y < this.rows; y++) {
+      for (let x = 0; x < this.cols; x++) {
+        if (this.board[y][x]) {
+          cells.push({ x, y });
+        }
+      }
+    }
+    return cells;
+  }
 
-    for (let j = 0; j < k; ++j) {
-      i = (i + 1) % n;
-      points[i][0] = randomX();
-      points[i][1] = randomY();
+  calculateNeighbors(board: Array<{x: number, y: number}>, x:number, y:number) {
+    let neighbors = 0;
+    const dirs = [[-1, -1], [-1, 0], [-1, 1], [0, 1], [1, 1], [1, 0], [1, -1], [0, -1]];
+    for (let i = 0; i < dirs.length; i++) {
+      const dir = dirs[i];
+      let y1 = y + dir[0];
+      let x1 = x + dir[1];
+
+      if (x1 >= 0 && x1 < this.cols && y1 >= 0 && y1 < this.rows && board[y1][x1]) {
+        neighbors++;
+      }
     }
 
-    this.setState({ points });
+    return neighbors;
   }
 
+
+  getElementOffset() {
+    const rect = this.boardRef.getBoundingClientRect();
+    const doc = document.documentElement;
+    return {
+      x: (rect.left + window.pageXOffset) - doc.clientLeft,
+      y: (rect.top + window.pageYOffset) - doc.clientTop,
+    };
+  }
+
+  handleClick = (event: any) => {
+    const elemOffset = this.getElementOffset();
+    const offsetX = event.clientX - elemOffset.x;
+    const offsetY = event.clientY - elemOffset.y;
+
+    const x = Math.floor(offsetX / CELL_SIZE);
+    const y = Math.floor(offsetY / CELL_SIZE);
+    if (x >= 0 && x <= this.cols && y >= 0 && y <= this.rows) {
+      this.board[y][x] = !this.board[y][x];
+    }
+    this.setState({ cells: this.makeCells() });
+  };
+
+  runGame = () => {
+    this.setState({ isRunning: true });
+    this.runIteration();
+  };
+
+  stopGame = () => {
+    this.setState({ isRunning: false });
+    if (this.timeoutHandler) {
+      window.clearTimeout(this.timeoutHandler);
+      this.timeoutHandler = null;
+    }
+  };
+
+  runIteration() {
+    let newBoard = this.makeEmptyBoard();
+
+    for (let y = 0; y < this.rows; y++) {
+      for (let x = 0; x < this.cols; x++) {
+        let neighbors = this.calculateNeighbors(this.board, x, y);
+        if (this.board[y][x]) {
+          if (neighbors === 2 || neighbors === 3) {
+            newBoard[y][x] = true;
+          } else {
+            newBoard[y][x] = false;
+          }
+        } else {
+          if (!this.board[y][x] && neighbors === 3) {
+            newBoard[y][x] = true;
+          }
+        }
+      }
+    }
+
+    this.board = newBoard;
+    this.setState({ cells: this.makeCells() });
+    this.timeoutHandler = window.setTimeout(() => {
+      this.runIteration();
+    }, this.state.interval);
+  }
+
+  handleIntervalChange = (event: any) => {
+    this.setState({ interval: event.target.value });
+  };
+
+
   render() {
-    const hexagons = hexbin(this.state.points).map(point => (
-      <path
-        d={hexbin.hexagon(19.5)}
-        transform={`translate(${point.x}, ${point.y})`}
-        fill={color(point.length)}
-      />
-    ));
+
+    const { isRunning, cells } = this.state;
 
     return (
-      <svg width={width} height={height}>
-        <g className="hexagons">
-          {hexagons}
-        </g>
-      </svg>
+      <div>
+        <div
+          className="Board"
+          style={{ width: WIDTH, height: HEIGHT, backgroundSize: `${CELL_SIZE}px ${CELL_SIZE}px`}}
+          onClick={this.handleClick}
+          ref={(n) => { this.boardRef = n; }}
+        >
+          {cells.map(cell => (
+            <Cell x={cell.x} y={cell.y}
+                  key={`${cell.x},${cell.y}`}/>
+          ))}
+        </div>
+        <div className="controls">
+          Update every <input value={this.state.interval}
+                              onChange={this.handleIntervalChange} /> msec
+          {isRunning ?
+            <button className="button"
+                    onClick={this.stopGame}>Stop</button> :
+            <button className="button"
+                    onClick={this.runGame}>Run</button>
+          }
+        </div>
+      </div>
     );
   }
 }
+
+type CellProps = {
+  x: number,
+  y: number
+};
+
+class Cell extends React.Component<CellProps> {
+  render() {
+    const { x, y } = this.props;
+    return (
+      <div className="Cell" style={{
+        left: `${CELL_SIZE * x + 1}px`,
+        top: `${CELL_SIZE * y + 1}px`,
+        width: `${CELL_SIZE - 1}px`,
+        height: `${CELL_SIZE - 1}px`,
+      }} />
+    );
+  }
+}
+
+export default Game;
