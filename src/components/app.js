@@ -1,28 +1,18 @@
 // @flow
 
 import React from 'react';
-import './App.css';
-const CELL_SIZE = 10;
-const BOTTOM_BAR_HEIGHT = 30;
+import styled from 'styled-components';
+import { rleDecompress } from '../utils';
+import patterns from '../data/patterns';
+
+import Cell from './cell';
+
+const CELL_SIZE = 5;
+const BOTTOM_BAR_HEIGHT = 50;
 const WIDTH = window.innerWidth;
 const HEIGHT = window.innerHeight - BOTTOM_BAR_HEIGHT;
-const PATTERN_OFFSET_X = 50;
-const PATTERN_OFFSET_Y = 30;
-
-const colorGradient = [
-  '#fcfe21',
-  '#e7f945',
-  '#d2f45e',
-  '#b9ed76',
-  '#a3e78b',
-  '#a3e78a',
-  '#89e19f',
-  '#5dd6c3',
-  '#45d1d7',
-  '#2ccae8',
-  '#1cdde8',
-  '#1cdde8'
-];
+const PATTERN_OFFSET_X = 10;
+const PATTERN_OFFSET_Y = 10;
 
 type State = {
   cells: Array<?{x: number, y: number}>,
@@ -30,7 +20,7 @@ type State = {
   isRunning: boolean
 };
 
-class Game extends React.Component<{}, State> {
+export default class Game extends React.Component<{}, State> {
 
   rows = 0;
   cols = 0;
@@ -48,7 +38,7 @@ class Game extends React.Component<{}, State> {
     super();
     this.rows = HEIGHT / CELL_SIZE;
     this.cols = WIDTH / CELL_SIZE;
-    this.board = this.makeBoardPattern(rleDecompress(treyRLE));
+    this.board = this.makeBoardPattern(rleDecompress(patterns.oscilator));
     this.state.cells = this.makeCells();
   }
 
@@ -88,7 +78,8 @@ class Game extends React.Component<{}, State> {
     return cells;
   }
 
-  calculateNeighbors(board: Array<{x: number, y: number}>, x:number, y:number) {
+  calculateNeighbors(board: any, x:number, y:number) {
+
     let neighbors = 0;
     const dirs = [[-1, -1], [-1, 0], [-1, 1], [0, 1], [1, 1], [1, 0], [1, -1], [0, -1]];
     for (let i = 0; i < dirs.length; i++) {
@@ -149,11 +140,7 @@ class Game extends React.Component<{}, State> {
       for (let x = 0; x < this.cols; x++) {
         let neighbors = this.calculateNeighbors(this.board, x, y);
         if (this.board[y][x]) {
-          if (neighbors === 2 || neighbors === 3) {
-            newBoard[y][x] = true;
-          } else {
-            newBoard[y][x] = false;
-          }
+          newBoard[y][x] = (neighbors === 2 || neighbors === 3);
         } else {
           if (!this.board[y][x] && neighbors === 3) {
             newBoard[y][x] = true;
@@ -164,6 +151,7 @@ class Game extends React.Component<{}, State> {
 
     this.board = newBoard;
     this.setState({ cells: this.makeCells() });
+
     this.timeoutHandler = window.setTimeout(() => {
       this.runIteration();
     }, this.state.interval);
@@ -179,19 +167,24 @@ class Game extends React.Component<{}, State> {
     const { isRunning, cells } = this.state;
 
     return (
-      <div>
-        <div
-          className="Board"
-          style={{ width: WIDTH, height: HEIGHT, backgroundSize: `${CELL_SIZE}px ${CELL_SIZE}px`}}
+      <PageWrapper>
+        <StyledBoard
+          pageWidth={WIDTH}
+          pageHeight={HEIGHT}
+          cellSize={CELL_SIZE}
           onClick={this.handleClick}
           ref={(n) => { this.boardRef = n; }}
         >
-          {cells.map(cell => (
-            <Cell x={cell.x} y={cell.y}
-                  key={`${cell.x},${cell.y}`}/>
-          ))}
-        </div>
-        <div className="controls">
+
+          {
+            cells.map(cell => cell &&
+              <Cell x={cell.x} y={cell.y} size={CELL_SIZE} key={`${cell.x},${cell.y}`}/>
+            )
+          }
+
+        </StyledBoard>
+
+        <ControlsArea>
           Update every <input value={this.state.interval}
                               onChange={this.handleIntervalChange} /> msec
           {isRunning ?
@@ -200,94 +193,60 @@ class Game extends React.Component<{}, State> {
             <button className="button"
                     onClick={this.runGame}>Run</button>
           }
-        </div>
-      </div>
+        </ControlsArea>
+      </PageWrapper>
     );
   }
 }
 
-type CellProps = {
-  x: number,
-  y: number
-};
+const PageWrapper = styled.div`
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  width: 100%;
+  height: 100vh;
+`;
 
-class Cell extends React.Component<CellProps> {
-  render() {
-    const { x, y } = this.props;
-    const gradientSelector = (x + y) % 10;
-    return (
-      <div className="Cell" style={{
-        left: `${CELL_SIZE * x}px`,
-        top: `${CELL_SIZE * y}px`,
-        width: `${CELL_SIZE}px`,
-        height: `${CELL_SIZE}px`,
-        backgroundColor: colorGradient[gradientSelector],
-        borderRadius: '5px'
-      }} />
-    );
+const StyledBoard = styled.div`
+  display: block;
+  width: ${p => p.pageWidth}px;
+  height: ${p => p.pageHeight}px;
+  position: relative;
+  margin: 0 auto;
+  background-color: #242833;
+  background-image: linear-gradient(#444 1px, transparent 1px), linear-gradient(90deg, #444 1px, transparent 1px);
+  background-size: ${p => p.cellSize}px ${p => p.cellSize}px;
+`;
+
+const ControlsArea = styled.div`
+  background: #EFEFEF;
+  color: #333;
+  font-size: 14px;
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  
+  input {
+    height: 25px;
+    margin: 0 5px 0 15px;
+    width: 50px;
   }
-}
-
-export default Game;
-
-
-var rleDecompress = function(rle) {
-  rle = rle.substr(rle.indexOf('\n', rle.indexOf('rule')+1)).replace('\n', '');
-  rle = rle.replace('\r', '');
-
-  var piece = {0:{}};
-  var num = '';
-  var x = 0;
-  var y = 0;
-  var l;
-
-  for(var s in rle) {
-
-    var s = rle[s];
-
-    if(s === 'b') {
-
-      x = num === '' ? x+1 : x + parseInt(num);
-      num = '';
-
-    }
-
-    else if(s === 'o') {
-
-      var i = num === '' ? 1 : parseInt(num);
-
-      while(i--)
-        piece[y][x+i] = 1;
-
-      x = num === '' ? x+1 : x + parseInt(num);
-      num = '';
-
-
-    }
-
-    else if(s === '$') {
-
-      y += num === '' ? 1 : parseInt(num);
-      x = 0;
-      num = '';
-      piece[y] = {};
-
-    }
-
-    else if(s === '!')
-      break;
-
-    else if(parseInt(s).toString() !== 'NaN'){
-
-      num += s;
-
-    }
-
+  
+  button {
+    font-size: 12pt;
+    cursor: pointer;
+    color: rgb(24, 188, 156);
+    background-color: transparent;
+    border-radius: 8px;
+    margin: 2px 0 0 10px;
+    padding: 3px;
+    width: 150px;
+    transition: background-color 0.2s ease 0s;
+    border-width: 1px;
+    border-style: solid;
+    border-color: rgb(24, 188, 156);
+    border-image: initial;
   }
-
-  return piece;
-
-};
-
-const treyRLE = `x = 8, y = 5, rule = B3/S23
-4b3o$3bo$o5bo$b2o2bobo$bobo!`;
+`;
