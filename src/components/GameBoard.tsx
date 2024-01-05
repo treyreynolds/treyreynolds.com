@@ -2,22 +2,66 @@ import React, { useState, useEffect, useRef } from "react";
 import styled from "styled-components";
 import { rleDecompress } from "../utils";
 import patterns from "../data/patterns";
-import Cell from "./Cell";
 
 const DEFAULT_CELL_SIZE = 6;
 const WIDTH = window.innerWidth;
 const HEIGHT = window.innerHeight;
-const INTERVAL_MS = 0.1;
 
 export default function GameBoard() {
+  const [generation, setGeneration] = useState<number>(0);
   const [cellSize, setCellSize] = useState<number>(DEFAULT_CELL_SIZE);
   const [board, setBoard] = useState<boolean[]>([]);
+  const [neighborIndices, setNeighborIndices] = useState<number[][]>([]);
   const [selectedPattern, setSelectedPattern] = useState(patterns.oscilator);
   const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [viralMode, setViralMode] = useState<boolean>(false);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
-    setBoard(makeBoardPattern(rleDecompress(selectedPattern)));
+    const initialBoard = makeBoardPattern(rleDecompress(selectedPattern));
+    setBoard(initialBoard);
+    setNeighborIndices(precomputeNeighborIndices());
   }, [selectedPattern]);
+
+  useEffect(() => {
+    drawBoard();
+  }, [board, cellSize]);
+
+  const colorGradient = [
+    "#fcfe21",
+    "#e7f945",
+    "#d2f45e",
+    "#b9ed76",
+    "#a3e78b",
+    "#a3e78a",
+    "#89e19f",
+    "#5dd6c3",
+    "#45d1d7",
+    "#2ccae8",
+    "#1cdde8",
+    "#1cdde8",
+  ];
+
+  const drawBoard = () => {
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.clearRect(0, 0, WIDTH, HEIGHT);
+        // get a random color for each fill
+        board.forEach((cell, idx) => {
+          if (cell) {
+            ctx.fillStyle = colorGradient[idx % colorGradient.length];
+            ctx.shadowBlur = 5;
+            ctx.shadowColor = "#0e0e0e";
+            const x = (idx % cols.current) * cellSize;
+            const y = Math.floor(idx / cols.current) * cellSize;
+            ctx.fillRect(x, y, cellSize, cellSize);
+          }
+        });
+      }
+    }
+  };
 
   const rows = useRef<number>(Math.floor(HEIGHT / cellSize));
   const cols = useRef<number>(Math.floor(WIDTH / cellSize));
@@ -68,30 +112,35 @@ export default function GameBoard() {
     return board;
   };
 
-  const calculateNeighbors = (
-    board: boolean[],
-    x: number,
-    y: number
-  ): number => {
-    let neighbors = 0;
-    const idx = (y1: number, x1: number) => y1 * cols.current + x1;
+  const precomputeNeighborIndices = () => {
+    const neighborIndices = new Array(rows.current * cols.current);
 
-    // Directly check each neighbor
-    neighbors += x > 0 && y > 0 && board[idx(y - 1, x - 1)] ? 1 : 0; // Top-left
-    neighbors += y > 0 && board[idx(y - 1, x)] ? 1 : 0; // Top
-    neighbors +=
-      x < cols.current - 1 && y > 0 && board[idx(y - 1, x + 1)] ? 1 : 0; // Top-right
-    neighbors += x > 0 && board[idx(y, x - 1)] ? 1 : 0; // Left
-    neighbors += x < cols.current - 1 && board[idx(y, x + 1)] ? 1 : 0; // Right
-    neighbors +=
-      x > 0 && y < rows.current - 1 && board[idx(y + 1, x - 1)] ? 1 : 0; // Bottom-left
-    neighbors += y < rows.current - 1 && board[idx(y + 1, x)] ? 1 : 0; // Bottom
-    neighbors +=
-      x < cols.current - 1 && y < rows.current - 1 && board[idx(y + 1, x + 1)]
-        ? 1
-        : 0; // Bottom-right
+    for (let y = 0; y < rows.current; y++) {
+      for (let x = 0; x < cols.current; x++) {
+        const idx = y * cols.current + x;
+        neighborIndices[idx] = [];
 
-    return neighbors;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx >= 0 && nx < cols.current && ny >= 0 && ny < rows.current) {
+              neighborIndices[idx].push(ny * cols.current + nx);
+            }
+          }
+        }
+      }
+    }
+
+    return neighborIndices;
+  };
+
+  const calculateNeighbors = (board: boolean[], idx: number): number => {
+    return neighborIndices[idx].reduce(
+      (acc, nIdx) => acc + (board[nIdx] ? 1 : 0),
+      0
+    );
   };
 
   const getElementOffset = (): { x: number; y: number } => {
@@ -159,7 +208,7 @@ export default function GameBoard() {
 
   const runGame = () => {
     setIsRunning(true);
-    runIteration(board);
+    runIteration(board, getActiveCells(board));
   };
 
   const stopGame = () => {
@@ -177,36 +226,46 @@ export default function GameBoard() {
     adjustZoom(newCellSize);
   };
 
-  const lastRenderTime = useRef(performance.now());
+  const getActiveCells = (board: boolean[]) => {
+    const activeCells: Set<number> = new Set();
 
-  const runIteration = (currentBoard: boolean[]) => {
-    const currentTime = performance.now();
-    const timeSinceLastRender = currentTime - lastRenderTime.current;
+    board.forEach((cell, idx) => {
+      if (cell) {
+        activeCells.add(idx);
+        neighborIndices[idx].forEach((nIdx) => activeCells.add(nIdx));
+      }
+    });
 
-    let newBoard: boolean[] | null = null;
+    return activeCells;
+  };
 
-    if (timeSinceLastRender > INTERVAL_MS) {
-      lastRenderTime.current = currentTime;
+  const runIteration = (currentBoard: boolean[], active: Set<number>) => {
+    setGeneration((prevGeneration) => prevGeneration + 1);
+    const newActiveCells: Set<number> = new Set();
+    const newBoard = currentBoard.slice();
 
-      newBoard = makeEmptyBoard(rows.current, cols.current);
+    let countForThisGeneration = 0;
+    active.forEach((idx) => {
+      const neighbors = calculateNeighbors(currentBoard, idx);
+      const alive = currentBoard[idx];
+      const willBeAlive = alive
+        ? neighbors === 2 || neighbors === 3
+        : neighbors === 3 || (viralMode && neighbors === 4);
 
-      for (let y = 0; y < rows.current; y++) {
-        for (let x = 0; x < cols.current; x++) {
-          let neighbors = calculateNeighbors(currentBoard, x, y);
-          let idx = y * cols.current + x;
-          if (currentBoard[idx]) {
-            newBoard[idx] = neighbors === 2 || neighbors === 3;
-          } else {
-            newBoard[idx] = neighbors === 3;
-          }
-        }
+      if (willBeAlive) {
+        newActiveCells.add(idx);
+        neighborIndices[idx].forEach((nIdx) => newActiveCells.add(nIdx));
       }
 
-      setBoard(newBoard);
-    }
+      newBoard[idx] = willBeAlive;
+      countForThisGeneration++;
+    });
 
+    setBoard(newBoard);
+
+    // Continue the game loop
     timeoutHandler.current = window.requestAnimationFrame(() =>
-      runIteration(newBoard || currentBoard)
+      runIteration(newBoard, newActiveCells)
     );
   };
 
@@ -234,6 +293,7 @@ export default function GameBoard() {
         }
       }
 
+      setNeighborIndices(precomputeNeighborIndices());
       return newBoard;
     });
 
@@ -254,13 +314,7 @@ export default function GameBoard() {
         onMouseMove={handleMouseMove}
         ref={boardRef}
       >
-        {board.map((cell, idx) => {
-          const x = idx % cols.current;
-          const y = Math.floor(idx / cols.current);
-          return cell ? (
-            <Cell x={x} y={y} size={cellSize} key={`${x},${y}`} />
-          ) : null;
-        })}
+        <canvas ref={canvasRef} width={WIDTH} height={HEIGHT}></canvas>
       </StyledBoard>
       <ControlsArea>
         <Row>
@@ -298,10 +352,24 @@ export default function GameBoard() {
             type="range"
             min={1}
             max={20}
-            step={0.5}
+            step={1}
             onChange={handleChangeZoom}
           />
         </ZoomControl>
+        <Row>
+          <Label htmlFor="viral-mode">Viral Mode</Label>
+          <input
+            id="viral-mode"
+            type="checkbox"
+            checked={viralMode}
+            onChange={() => setViralMode(!viralMode)}
+            disabled={isRunning}
+          />
+        </Row>
+        <Row>
+          <Label>Generation</Label>
+          {generation}
+        </Row>
       </ControlsArea>
       <Logo>
         <img src="/trey-invert.svg" alt="Trey logo" width="150" height="150" />
@@ -337,8 +405,11 @@ const StyledBoard = styled.div<StyledBoardProps>`
   position: relative;
   margin: 0 auto;
   background-color: #242833;
-  background-image: linear-gradient(#333 1px, transparent 1px),
-    linear-gradient(90deg, #333 1px, transparent 1px);
+  background-image: ${(p) =>
+    p.$cellSize > 2
+      ? `linear-gradient(#333 1px, transparent 1px),
+    linear-gradient(90deg, #333 1px, transparent 1px)`
+      : "none"};
   background-size: ${(p) => p.$cellSize}px;
 `;
 
